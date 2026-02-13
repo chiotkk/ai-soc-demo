@@ -83,6 +83,11 @@ class MockStore {
     return this.alerts.find(a => a.id === id);
   }
 
+  addAlert(alert: Alert) {
+    this.alerts = [alert, ...this.alerts];
+    this.notify();
+  }
+
   updateAlert(id: string, updates: Partial<Alert>) {
     this.alerts = this.alerts.map(a => a.id === id ? { ...a, ...updates } : a);
     this.notify();
@@ -97,6 +102,10 @@ class MockStore {
   }
 
   createCase(fromAlert: Alert) {
+    // Check if case already exists for this alert to prevent duplicates
+    const existingCase = this.cases.find(c => c.linkedAlertIds.includes(fromAlert.id));
+    if (existingCase) return existingCase;
+
     const newCase: Case = {
       id: `CASE-${Date.now().toString().slice(-4)}`,
       status: CaseStatus.OPEN,
@@ -114,6 +123,46 @@ class MockStore {
     this.addAuditLog('Human', 'INVESTIGATION', `Created case ${newCase.id} from alert ${fromAlert.id}`, newCase.id, fromAlert.id);
     this.notify();
     return newCase;
+  }
+
+  linkAlertToCase(caseId: string, alert: Alert) {
+    const kaseIndex = this.cases.findIndex(c => c.id === caseId);
+    if (kaseIndex === -1) return;
+    
+    const kase = this.cases[kaseIndex];
+    if (kase.linkedAlertIds.includes(alert.id)) return;
+
+    // Merge IOCs
+    const newIocs = [...kase.iocs];
+    alert.aiTriage?.iocs.forEach(alertIoc => {
+        const existing = newIocs.find(i => i.value === alertIoc.value && i.type === alertIoc.type);
+        if (existing) {
+            existing.count++;
+        } else {
+            newIocs.push({ ...alertIoc, count: 1 });
+        }
+    });
+
+    const updatedCase: Case = {
+        ...kase,
+        linkedAlertIds: [...kase.linkedAlertIds, alert.id],
+        iocs: newIocs,
+        timeline: [
+            ...kase.timeline,
+            { ts: alert.ts, description: `Linked Alert: ${alert.title}`, type: 'alert' },
+            { ts: new Date().toISOString(), description: `Linked alert ${alert.id} to case`, type: 'note' }
+        ],
+        updatedAt: new Date().toISOString()
+    };
+    
+    this.cases = [
+        ...this.cases.slice(0, kaseIndex),
+        updatedCase,
+        ...this.cases.slice(kaseIndex + 1)
+    ];
+
+    this.addAuditLog('Human', 'INVESTIGATION', `Linked alert ${alert.id} to case ${caseId}`, caseId, alert.id);
+    this.notify();
   }
 
   updateCase(id: string, updates: Partial<Case>) {

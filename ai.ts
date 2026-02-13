@@ -87,35 +87,63 @@ const STUB_RESPONSE_PLAN: Record<string, any> = {
 
 const getApiKey = () => process.env.API_KEY || '';
 
+const generateDynamicTriage = (alert: Alert) => {
+  // If it matches one of the hardcoded seed alerts, return that specific rich stub
+  if (STUB_TRIAGE_RESPONSES[alert.id]) {
+      return STUB_TRIAGE_RESPONSES[alert.id];
+  }
+
+  // Otherwise generate based on title for simulated alerts
+  let summary = `Automated analysis detected pattern matching ${alert.title}.`;
+  let rationale = `The event displays characteristics of ${alert.title} with ${alert.rawSeverity} severity indicators.`;
+  let iocs = [{ type: 'Source', value: alert.source }];
+  let checks = ["Verify user activity", "Check system logs"];
+
+  if (alert.title.includes('PowerShell')) {
+      summary = "Detected encoded PowerShell command execution often associated with malware loaders or lateral movement tools like Cobalt Strike.";
+      rationale = "Base64 encoded arguments and execution policy bypass flags were observed in the process launch string.";
+      iocs.push({ type: 'Process', value: 'powershell.exe -enc' });
+      checks = ["Inspect full command line arguments", "Check parent process relationship", "Isolate host if unapproved"];
+  } else if (alert.title.includes('Egress')) {
+      summary = "Unusual volume of outbound traffic detected to an unclassified IP address, potentially indicating data exfiltration.";
+      rationale = "Traffic volume (5GB+) exceeds historical baseline for this host by 400% during non-business hours.";
+      iocs.push({ type: 'IP', value: '198.51.100.23' });
+      checks = ["Verify destination IP reputation", "Check file access logs around timestamp", "Review DLP alerts"];
+  } else if (alert.title.includes('Admin')) {
+      summary = "Privileged account creation detected outside of scheduled maintenance windows.";
+      rationale = "Creation of 'admin' level user from a non-administrative subnet triggers this high-fidelity alert.";
+      iocs.push({ type: 'User', value: 'temp_admin_01' });
+      checks = ["Contact the user immediately", "Verify change management ticket", "Disable account pending review"];
+  } else if (alert.title.includes('Scan')) {
+    summary = "Horizontal port scan detected originating from internal asset.";
+    rationale = "Rapid connection attempts to multiple hosts on ports 445 and 3389 indicates potential lateral movement reconnaissance.";
+    iocs.push({ type: 'Port', value: '445, 3389' });
+    checks = ["Isolate source host", "Scan source host for malware", "Review firewall deny logs"];
+  } else if (alert.title.includes('Travel')) {
+    summary = "Impossible travel detected for user account.";
+    rationale = "Sequential logins from geographically distant locations (London -> Tokyo) within impossible timeframe (5 mins).";
+    iocs.push({ type: 'Geo', value: 'London / Tokyo' });
+    checks = ["Force password reset", "Review session logs", "Contact user for verification"];
+  }
+
+  return {
+    summary,
+    severity: alert.rawSeverity as Severity,
+    rationale,
+    iocs,
+    recommendedChecks: checks
+  };
+};
+
 export const triageAlert = async (alert: Alert): Promise<NonNullable<Alert['aiTriage']>> => {
   store.addAuditLog(LOG_ACTOR, 'TRIAGE', `Analyzing alert ${alert.id}...`, undefined, alert.id);
   
-  const apiKey = getApiKey();
+  // Use dummy result directly for demo purposes as requested
+  await new Promise(r => setTimeout(r, 1500)); // Simulate think time
+  const result = generateDynamicTriage(alert);
   
-  if (!apiKey) {
-    // Stub Fallback
-    await new Promise(r => setTimeout(r, 1500)); // Simulate think time
-    const stub = STUB_TRIAGE_RESPONSES[alert.id] || STUB_TRIAGE_RESPONSES['AL-1003'];
-    store.addAuditLog(LOG_ACTOR, 'TRIAGE', `Completed triage for ${alert.id}`, undefined, alert.id);
-    return stub;
-  }
-
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: `Analyze this security alert and return a JSON object with keys: summary (string), severity (Low|Medium|High|Critical), rationale (string), iocs (array of objects {type, value}), recommendedChecks (array of strings). 
-      
-      Alert Data: ${JSON.stringify(alert)}`,
-       config: { responseMimeType: 'application/json' }
-    });
-    
-    store.addAuditLog(LOG_ACTOR, 'TRIAGE', `Completed triage for ${alert.id}`, undefined, alert.id);
-    return JSON.parse(response.text || '{}');
-  } catch (e) {
-    console.error("AI Error", e);
-    return STUB_TRIAGE_RESPONSES['AL-1001']; // Fail safe
-  }
+  store.addAuditLog(LOG_ACTOR, 'TRIAGE', `Completed triage for ${alert.id}`, undefined, alert.id);
+  return result;
 };
 
 export const investigateCase = async (kase: Case, alerts: Alert[]) => {
