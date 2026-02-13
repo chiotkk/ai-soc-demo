@@ -1,0 +1,5 @@
+{
+  "name": "Sentinel AI SOC",
+  "description": "An AI-native Security Operations Center demo featuring automated triage, MDR-style investigation, and incident response planning.",
+  "requestFramePermissions": []
+}
